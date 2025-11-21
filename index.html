@@ -188,6 +188,62 @@
 
         <!-- Material Override (Only for default object mainly) -->
         <div class="space-y-4">
+            <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Material Overrides</label>
+            
+            <div id="selected-mesh-info" class="text-xs text-gray-500 mb-2">No mesh selected</div>
+            
+            <!-- Texture Inputs -->
+            <div class="space-y-2">
+                <div>
+                    <label class="block text-xs text-gray-300">Color Texture</label>
+                    <input type="file" id="inp-tex-color" accept="image/*" class="w-full text-xs text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-600 file:text-white hover:file:bg-gray-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-300">Roughness Texture</label>
+                    <input type="file" id="inp-tex-roughness" accept="image/*" class="w-full text-xs text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-600 file:text-white hover:file:bg-gray-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-300">Metalness Texture</label>
+                    <input type="file" id="inp-tex-metalness" accept="image/*" class="w-full text-xs text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-600 file:text-white hover:file:bg-gray-500">
+                </div>
+                <div>
+                    <label class="block text-xs text-gray-300">Normal Texture</label>
+                    <input type="file" id="inp-tex-normal" accept="image/*" class="w-full text-xs text-gray-300 file:mr-2 file:py-1 file:px-2 file:rounded file:border-0 file:text-xs file:bg-gray-600 file:text-white hover:file:bg-gray-500">
+                </div>
+            </div>
+            
+            <!-- Scalar Properties -->
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Color</label>
+                </div>
+                <input type="color" id="inp-mat-color" value="#ffffff" class="w-full h-8 border border-gray-600 rounded">
+            </div>
+            
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Roughness</label>
+                    <span id="val-mat-roughness" class="text-gray-500 font-mono text-xs">0.5</span>
+                </div>
+                <input type="range" min="0" max="1" step="0.01" value="0.5" id="inp-mat-roughness" class="slider-thumb">
+            </div>
+            
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Metalness</label>
+                    <span id="val-mat-metalness" class="text-gray-500 font-mono text-xs">0.0</span>
+                </div>
+                <input type="range" min="0" max="1" step="0.01" value="0.0" id="inp-mat-metalness" class="slider-thumb">
+            </div>
+            
+            <button id="btn-reset-materials" class="w-full bg-red-600 hover:bg-red-500 text-white py-2 px-4 rounded transition text-xs font-medium">
+                Reset Materials
+            </button>
+        </div>
+
+        <hr class="border-gray-700 my-6">
+
+        <div class="space-y-4">
             <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider">Actions</label>
             <button id="btn-reset" class="w-full bg-gray-700 hover:bg-gray-600 text-white py-2 px-4 rounded transition text-xs font-medium">
                 Reset Camera
@@ -221,8 +277,24 @@
             aoMinDist: 0.005,
             aoRadius: 16,
             bgBlur: 0.0,
-            envRotation: 0
+            envRotation: 0,
+            material: {
+                color: '#ffffff',
+                roughness: 0.5,
+                metalness: 0.0,
+                textures: {
+                    color: null,
+                    roughness: null,
+                    metalness: null,
+                    normal: null
+                }
+            }
         };
+
+        // Material management
+        let originalMaterials = new Map(); // mesh -> original material
+        let selectedMesh = null;
+        const textureLoader = new THREE.TextureLoader();
 
         // Setup
         const container = document.getElementById('canvas-container');
@@ -309,6 +381,9 @@
         defaultMesh.position.y = 1.3;
         scene.add(defaultMesh);
         currentModel = defaultMesh;
+        originalMaterials.set(defaultMesh, defaultMaterial.clone());
+        selectedMesh = defaultMesh;
+        document.getElementById('selected-mesh-info').textContent = 'Selected: Default Mesh';
 
         // Lights (Auxiliary for sharper shadows, though HDRI does most work)
         const dirLight = new THREE.DirectionalLight(0xffffff, 1);
@@ -330,6 +405,24 @@
             renderer.setSize(window.innerWidth, window.innerHeight);
             composer.setSize(window.innerWidth, window.innerHeight);
         }
+
+        // Raycaster for mesh selection
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        renderer.domElement.addEventListener('click', (event) => {
+            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            const objects = currentModel ? [currentModel] : [defaultMesh];
+            const intersects = raycaster.intersectObjects(objects, true);
+            if (intersects.length > 0) {
+                const mesh = intersects[0].object;
+                if (mesh.isMesh) {
+                    selectedMesh = mesh;
+                    document.getElementById('selected-mesh-info').textContent = `Selected: ${mesh.name || 'Mesh'}`;
+                }
+            }
+        });
 
         // Logic: Load Model
         const gltfLoader = new GLTFLoader();
@@ -378,8 +471,17 @@
                     }
                 });
 
+                originalMaterials.clear();
+                model.traverse((node) => {
+                    if (node.isMesh) {
+                        originalMaterials.set(node, node.material.clone());
+                    }
+                });
+
                 scene.add(model);
                 currentModel = model;
+                selectedMesh = null;
+                document.getElementById('selected-mesh-info').textContent = 'No mesh selected';
 
                 // Cleanup
                 URL.revokeObjectURL(url);
@@ -394,6 +496,60 @@
                 document.getElementById('loading-overlay').style.display = 'none';
             });
         });
+
+        // Material Functions
+        function applyMaterialOverrides(mesh) {
+            if (!mesh || !mesh.material) return;
+            const newMat = new THREE.MeshStandardMaterial();
+            // Copy from original if possible
+            if (originalMaterials.has(mesh)) {
+                newMat.copy(originalMaterials.get(mesh));
+            }
+            // Apply overrides
+            newMat.color.set(state.material.color);
+            newMat.roughness = state.material.roughness;
+            newMat.metalness = state.material.metalness;
+            // Apply textures
+            if (state.material.textures.color) {
+                newMat.map = state.material.textures.color;
+            }
+            if (state.material.textures.roughness) {
+                newMat.roughnessMap = state.material.textures.roughness;
+            }
+            if (state.material.textures.metalness) {
+                newMat.metalnessMap = state.material.textures.metalness;
+            }
+            if (state.material.textures.normal) {
+                newMat.normalMap = state.material.textures.normal;
+            }
+            mesh.material = newMat;
+            mesh.castShadow = true;
+            mesh.receiveShadow = true;
+        }
+
+        function resetMaterials() {
+            if (currentModel) {
+                currentModel.traverse((node) => {
+                    if (node.isMesh && originalMaterials.has(node)) {
+                        node.material = originalMaterials.get(node);
+                        node.castShadow = true;
+                        node.receiveShadow = true;
+                        if (node.material.map) node.material.map.anisotropy = 8;
+                    }
+                });
+            }
+            // Reset state
+            state.material.color = '#ffffff';
+            state.material.roughness = 0.5;
+            state.material.metalness = 0.0;
+            state.material.textures = { color: null, roughness: null, metalness: null, normal: null };
+            // Update UI
+            document.getElementById('inp-mat-color').value = state.material.color;
+            document.getElementById('inp-mat-roughness').value = state.material.roughness;
+            document.getElementById('val-mat-roughness').textContent = state.material.roughness.toFixed(2);
+            document.getElementById('inp-mat-metalness').value = state.material.metalness;
+            document.getElementById('val-mat-metalness').textContent = state.material.metalness.toFixed(2);
+        }
 
         // Logic: UI Event Listeners
         document.getElementById('inp-exposure').addEventListener('input', (e) => {
@@ -488,6 +644,80 @@
             link.href = dataURL;
             link.click();
         });
+
+        // Material UI Listeners
+        document.getElementById('inp-tex-color').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                textureLoader.load(url, (texture) => {
+                    texture.encoding = THREE.sRGBEncoding;
+                    texture.anisotropy = 8;
+                    state.material.textures.color = texture;
+                    if (selectedMesh) applyMaterialOverrides(selectedMesh);
+                });
+            }
+        });
+
+        document.getElementById('inp-tex-roughness').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                textureLoader.load(url, (texture) => {
+                    texture.encoding = THREE.LinearEncoding;
+                    texture.anisotropy = 8;
+                    state.material.textures.roughness = texture;
+                    if (selectedMesh) applyMaterialOverrides(selectedMesh);
+                });
+            }
+        });
+
+        document.getElementById('inp-tex-metalness').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                textureLoader.load(url, (texture) => {
+                    texture.encoding = THREE.LinearEncoding;
+                    texture.anisotropy = 8;
+                    state.material.textures.metalness = texture;
+                    if (selectedMesh) applyMaterialOverrides(selectedMesh);
+                });
+            }
+        });
+
+        document.getElementById('inp-tex-normal').addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) {
+                const url = URL.createObjectURL(file);
+                textureLoader.load(url, (texture) => {
+                    texture.encoding = THREE.LinearEncoding;
+                    texture.anisotropy = 8;
+                    state.material.textures.normal = texture;
+                    if (selectedMesh) applyMaterialOverrides(selectedMesh);
+                });
+            }
+        });
+
+        document.getElementById('inp-mat-color').addEventListener('input', (e) => {
+            state.material.color = e.target.value;
+            if (selectedMesh) applyMaterialOverrides(selectedMesh);
+        });
+
+        document.getElementById('inp-mat-roughness').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.material.roughness = val;
+            document.getElementById('val-mat-roughness').textContent = val.toFixed(2);
+            if (selectedMesh) applyMaterialOverrides(selectedMesh);
+        });
+
+        document.getElementById('inp-mat-metalness').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.material.metalness = val;
+            document.getElementById('val-mat-metalness').textContent = val.toFixed(2);
+            if (selectedMesh) applyMaterialOverrides(selectedMesh);
+        });
+
+        document.getElementById('btn-reset-materials').addEventListener('click', resetMaterials);
 
         // Animation Loop
         function animate() {
