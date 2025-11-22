@@ -169,6 +169,23 @@
             
             <div>
                 <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Anti-Aliasing</label>
+                    <span id="val-aa" class="text-gray-500 font-mono text-xs">OFF</span>
+                </div>
+                <div class="flex items-center gap-2 mb-2">
+                    <input type="checkbox" id="inp-aa-toggle" class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-600">
+                    <span class="text-xs text-gray-500">Enable AA</span>
+                </div>
+                
+                <div class="flex justify-between mb-1">
+                    <span class="text-xs text-gray-500">AA Quality</span>
+                    <span id="val-aa-quality" class="text-gray-500 font-mono text-xs">1.0</span>
+                </div>
+                <input type="range" min="1.0" max="2.0" step="0.1" value="1.0" id="inp-aa-quality" class="slider-thumb">
+            </div>
+
+            <div>
+                <div class="flex justify-between mb-1">
                     <label class="text-gray-300">Background Blur</label>
                     <span id="val-blur" class="text-gray-500 font-mono text-xs">0.0</span>
                 </div>
@@ -182,7 +199,14 @@
                 </div>
                 <input type="range" min="0" max="360" step="1" value="0" id="inp-rot" class="slider-thumb">
             </div>
-        </div>
+
+            <div>
+                <div class="flex justify-between mb-1">
+                    <label class="text-gray-300">Texture Scale</label>
+                    <span id="val-tex-scale" class="text-gray-500 font-mono text-xs">1.0</span>
+                </div>
+                <input type="range" min="0.1" max="10" step="0.1" value="1.0" id="inp-tex-scale" class="slider-thumb">
+            </div>
 
         <hr class="border-gray-700 my-6">
 
@@ -278,6 +302,9 @@
             aoRadius: 0.25,
             bgBlur: 0.0,
             envRotation: 0,
+            aaEnabled: false,
+            aaQuality: 1.0,
+            textureScale: 1.0,
             material: {
                 color: '#ffffff',
                 roughness: 0.5,
@@ -298,14 +325,7 @@
 
         // Setup
         const container = document.getElementById('canvas-container');
-        const renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: "high-performance" });
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-        renderer.toneMapping = THREE.ACESFilmicToneMapping;
-        renderer.toneMappingExposure = 1.0;
-        renderer.shadowMap.enabled = true;
-        renderer.shadowMap.type = THREE.PCFSoftShadowMap;
-        container.appendChild(renderer.domElement);
+        let renderer, composer, renderPass, aoPass, outputPass, controls;
 
         const scene = new THREE.Scene();
         scene.background = new THREE.Color(0x111111);
@@ -313,32 +333,92 @@
         const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 1000);
         camera.position.set(5, 3, 6);
 
-        const controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
-        controls.dampingFactor = 0.05;
-        controls.minDistance = 0.5;
-        controls.maxDistance = 50;
+        // Lights (Auxiliary for sharper shadows, though HDRI does most work)
+        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
+        // Store original position for rotation calculations
+        const dirLightOriginalPos = new THREE.Vector3(5, 10, 7); 
+        dirLight.position.copy(dirLightOriginalPos);
+        dirLight.castShadow = true;
+        dirLight.shadow.mapSize.width = 2048;
+        dirLight.shadow.mapSize.height = 2048;
+        dirLight.shadow.bias = -0.0001;
+        scene.add(dirLight);
 
-        // Post Processing Setup
-        const composer = new EffectComposer(renderer);
-        
-        const renderPass = new RenderPass(scene, camera);
-        composer.addPass(renderPass);
+        function createRenderer() {
+            // Dispose old renderer
+            if (renderer) {
+                renderer.dispose();
+                if (container.contains(renderer.domElement)) {
+                    container.removeChild(renderer.domElement);
+                }
+            }
 
-        const width = window.innerWidth;
-        const height = window.innerHeight;
-        const aoPass = new GTAOPass(scene, camera, width, height);
-        
-        // INITIAL VALUES - Critical for initial visual
-        aoPass.radius = state.aoRadius; 
-        aoPass.distanceExponent = state.aoDistanceExponent;
-        aoPass.thickness = state.aoThickness;
-        aoPass.output = GTAOPass.OUTPUT.Default;
-        
-        composer.addPass(aoPass);
+            renderer = new THREE.WebGLRenderer({ antialias: state.aaEnabled, powerPreference: "high-performance" });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(state.aaQuality);
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = state.exposure;
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
 
-        const outputPass = new OutputPass();
-        composer.addPass(outputPass);
+            // Update controls
+            if (controls) {
+                controls.dispose();
+            }
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.minDistance = 0.5;
+            controls.maxDistance = 50;
+
+            // Attach click listener for mesh selection
+            renderer.domElement.addEventListener('click', (event) => {
+                mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
+                mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
+                raycaster.setFromCamera(mouse, camera);
+                const objects = currentModel ? [currentModel] : [defaultMesh];
+                const intersects = raycaster.intersectObjects(objects, true);
+                if (intersects.length > 0) {
+                    const mesh = intersects[0].object;
+                    if (mesh.isMesh) {
+                        selectedMesh = mesh;
+                        document.getElementById('selected-mesh-info').textContent = `Selected: ${mesh.name || 'Mesh'}`;
+                    }
+                }
+            });
+
+            // Recreate composer and passes
+            composer = new EffectComposer(renderer);
+            
+            renderPass = new RenderPass(scene, camera);
+            composer.addPass(renderPass);
+
+            const width = window.innerWidth;
+            const height = window.innerHeight;
+            aoPass = new GTAOPass(scene, camera, width, height);
+            aoPass.radius = state.aoRadius; 
+            aoPass.distanceExponent = state.aoDistanceExponent;
+            aoPass.thickness = state.aoThickness;
+            aoPass.output = GTAOPass.OUTPUT.Default;
+            
+            composer.addPass(aoPass);
+
+            outputPass = new OutputPass();
+            composer.addPass(outputPass);
+
+            // Apply current state
+            scene.environmentIntensity = state.envIntensity;
+            scene.backgroundIntensity = state.envIntensity;
+            scene.backgroundBlurriness = state.bgBlur;
+            const rad = THREE.MathUtils.degToRad(state.envRotation);
+            if (scene.backgroundRotation) scene.backgroundRotation.y = rad;
+            if (scene.environmentRotation) scene.environmentRotation.y = rad;
+            dirLight.position.copy(dirLightOriginalPos.clone().applyAxisAngle(new THREE.Vector3(0, 1, 0), rad));
+        }
+
+        // Initial creation
+        createRenderer();
 
         // Lighting & Environment
         let envMap;
@@ -385,17 +465,6 @@
         selectedMesh = defaultMesh;
         document.getElementById('selected-mesh-info').textContent = 'Selected: Default Mesh';
 
-        // Lights (Auxiliary for sharper shadows, though HDRI does most work)
-        const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-        // Store original position for rotation calculations
-        const dirLightOriginalPos = new THREE.Vector3(5, 10, 7); 
-        dirLight.position.copy(dirLightOriginalPos);
-        dirLight.castShadow = true;
-        dirLight.shadow.mapSize.width = 2048;
-        dirLight.shadow.mapSize.height = 2048;
-        dirLight.shadow.bias = -0.0001;
-        scene.add(dirLight);
-
         // Resize Handler
         window.addEventListener('resize', onWindowResize, false);
 
@@ -409,20 +478,6 @@
         // Raycaster for mesh selection
         const raycaster = new THREE.Raycaster();
         const mouse = new THREE.Vector2();
-        renderer.domElement.addEventListener('click', (event) => {
-            mouse.x = (event.clientX / window.innerWidth) * 2 - 1;
-            mouse.y = -(event.clientY / window.innerHeight) * 2 + 1;
-            raycaster.setFromCamera(mouse, camera);
-            const objects = currentModel ? [currentModel] : [defaultMesh];
-            const intersects = raycaster.intersectObjects(objects, true);
-            if (intersects.length > 0) {
-                const mesh = intersects[0].object;
-                if (mesh.isMesh) {
-                    selectedMesh = mesh;
-                    document.getElementById('selected-mesh-info').textContent = `Selected: ${mesh.name || 'Mesh'}`;
-                }
-            }
-        });
 
         // Logic: Load Model
         const gltfLoader = new GLTFLoader();
@@ -468,6 +523,15 @@
                         node.receiveShadow = true;
                         // Improve material quality if needed
                         if (node.material.map) node.material.map.anisotropy = 8;
+                        // Set texture scaling
+                        const textures = [node.material.map, node.material.roughnessMap, node.material.metalnessMap, node.material.normalMap, node.material.emissiveMap, node.material.aoMap];
+                        textures.forEach((texture) => {
+                            if (texture) {
+                                texture.repeat.set(state.textureScale, state.textureScale);
+                                texture.wrapS = THREE.RepeatWrapping;
+                                texture.wrapT = THREE.RepeatWrapping;
+                            }
+                        });
                     }
                 });
 
@@ -522,6 +586,15 @@
             if (state.material.textures.normal) {
                 newMat.normalMap = state.material.textures.normal;
             }
+            // Set texture scaling for override textures
+            const textures = [newMat.map, newMat.roughnessMap, newMat.metalnessMap, newMat.normalMap];
+            textures.forEach((texture) => {
+                if (texture) {
+                    texture.repeat.set(state.textureScale, state.textureScale);
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
+                }
+            });
             mesh.material = newMat;
             mesh.castShadow = true;
             mesh.receiveShadow = true;
@@ -535,6 +608,15 @@
                         node.castShadow = true;
                         node.receiveShadow = true;
                         if (node.material.map) node.material.map.anisotropy = 8;
+                        // Set texture scaling
+                        const textures = [node.material.map, node.material.roughnessMap, node.material.metalnessMap, node.material.normalMap, node.material.emissiveMap, node.material.aoMap];
+                        textures.forEach((texture) => {
+                            if (texture) {
+                                texture.repeat.set(state.textureScale, state.textureScale);
+                                texture.wrapS = THREE.RepeatWrapping;
+                                texture.wrapT = THREE.RepeatWrapping;
+                            }
+                        });
                     }
                 });
             }
@@ -551,15 +633,36 @@
             document.getElementById('val-mat-metalness').textContent = state.material.metalness.toFixed(2);
         }
 
+        function updateTextureScale() {
+            const scale = state.textureScale;
+            if (currentModel) {
+                currentModel.traverse((node) => {
+                    if (node.isMesh && node.material) {
+                        const textures = [node.material.map, node.material.roughnessMap, node.material.metalnessMap, node.material.normalMap, node.material.emissiveMap, node.material.aoMap];
+                        textures.forEach((texture) => {
+                            if (texture) {
+                                texture.repeat.set(scale, scale);
+                                texture.wrapS = THREE.RepeatWrapping;
+                                texture.wrapT = THREE.RepeatWrapping;
+                                texture.needsUpdate = true;
+                            }
+                        });
+                    }
+                });
+            }
+        }
+
         // Logic: UI Event Listeners
         document.getElementById('inp-exposure').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
+            state.exposure = val;
             renderer.toneMappingExposure = val;
             document.getElementById('val-exposure').textContent = val.toFixed(1);
         });
 
         document.getElementById('inp-env').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
+            state.envIntensity = val;
             scene.environmentIntensity = val;
             scene.backgroundIntensity = val; // Optional: dim background too
             document.getElementById('val-env').textContent = val.toFixed(1);
@@ -606,16 +709,33 @@
             document.getElementById('val-ao-min').textContent = val.toFixed(3);
         });
 
+        // --- AA CONTROLS ---
+
+        document.getElementById('inp-aa-toggle').addEventListener('change', (e) => {
+            state.aaEnabled = e.target.checked;
+            document.getElementById('val-aa').textContent = state.aaEnabled ? "ON" : "OFF";
+            createRenderer();
+        });
+
+        document.getElementById('inp-aa-quality').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.aaQuality = val;
+            document.getElementById('val-aa-quality').textContent = val.toFixed(1);
+            createRenderer();
+        });
+
         // -----------------------------
 
         document.getElementById('inp-blur').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
+            state.bgBlur = val;
             scene.backgroundBlurriness = val;
             document.getElementById('val-blur').textContent = val.toFixed(2);
         });
 
         document.getElementById('inp-rot').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
+            state.envRotation = val;
             const rad = THREE.MathUtils.degToRad(val);
             
             // Safety checks for different three.js versions
@@ -631,6 +751,13 @@
             }
 
             document.getElementById('val-rot').textContent = val;
+        });
+
+        document.getElementById('inp-tex-scale').addEventListener('input', (e) => {
+            const val = parseFloat(e.target.value);
+            state.textureScale = val;
+            updateTextureScale();
+            document.getElementById('val-tex-scale').textContent = val.toFixed(1);
         });
 
         document.getElementById('btn-reset').addEventListener('click', () => {
@@ -656,6 +783,9 @@
                 textureLoader.load(url, (texture) => {
                     texture.encoding = THREE.sRGBEncoding;
                     texture.anisotropy = 8;
+                    texture.repeat.set(state.textureScale, state.textureScale);
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
                     state.material.textures.color = texture;
                     if (selectedMesh) applyMaterialOverrides(selectedMesh);
                 });
@@ -669,6 +799,9 @@
                 textureLoader.load(url, (texture) => {
                     texture.encoding = THREE.LinearEncoding;
                     texture.anisotropy = 8;
+                    texture.repeat.set(state.textureScale, state.textureScale);
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
                     state.material.textures.roughness = texture;
                     if (selectedMesh) applyMaterialOverrides(selectedMesh);
                 });
@@ -682,6 +815,9 @@
                 textureLoader.load(url, (texture) => {
                     texture.encoding = THREE.LinearEncoding;
                     texture.anisotropy = 8;
+                    texture.repeat.set(state.textureScale, state.textureScale);
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
                     state.material.textures.metalness = texture;
                     if (selectedMesh) applyMaterialOverrides(selectedMesh);
                 });
@@ -695,6 +831,9 @@
                 textureLoader.load(url, (texture) => {
                     texture.encoding = THREE.LinearEncoding;
                     texture.anisotropy = 8;
+                    texture.repeat.set(state.textureScale, state.textureScale);
+                    texture.wrapS = THREE.RepeatWrapping;
+                    texture.wrapT = THREE.RepeatWrapping;
                     state.material.textures.normal = texture;
                     if (selectedMesh) applyMaterialOverrides(selectedMesh);
                 });
