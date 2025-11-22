@@ -134,12 +134,12 @@
 
              <div>
                 <div class="flex justify-between mb-1">
-                    <label class="text-gray-300">Ambient Occlusion (SSAO)</label>
+                    <label class="text-gray-300">Ambient Occlusion (GTAO)</label>
                     <span id="val-ao" class="text-gray-500 font-mono text-xs">ON</span>
                 </div>
                 <div class="flex items-center gap-2 mb-2">
                     <input type="checkbox" id="inp-ao-toggle" checked class="w-4 h-4 rounded bg-gray-700 border-gray-600 text-blue-600 focus:ring-blue-600">
-                    <span class="text-xs text-gray-500">Enable SSAO</span>
+                    <span class="text-xs text-gray-500">Enable GTAO</span>
                 </div>
                 
                 <!-- Added View Output Toggle -->
@@ -149,22 +149,22 @@
                 </div>
 
                 <div class="flex justify-between mb-1">
-                    <span class="text-xs text-gray-500">Falloff / Max Dist</span>
-                    <span id="val-ao-intensity" class="text-gray-500 font-mono text-xs">0.10</span>
+                    <span class="text-xs text-gray-500">Distance Exponent</span>
+                    <span id="val-ao-intensity" class="text-gray-500 font-mono text-xs">1.00</span>
                 </div>
-                <input type="range" min="0.01" max="2.0" step="0.01" value="0.1" id="inp-ao-intensity" class="slider-thumb mb-2">
+                <input type="range" min="0.1" max="3.0" step="0.01" value="1.0" id="inp-ao-intensity" class="slider-thumb mb-2">
                 
                 <div class="flex justify-between mb-1">
-                    <span class="text-xs text-gray-500">Kernel Radius</span>
-                    <span id="val-ao-radius" class="text-gray-500 font-mono text-xs">16</span>
+                    <span class="text-xs text-gray-500">Radius</span>
+                    <span id="val-ao-radius" class="text-gray-500 font-mono text-xs">0.25</span>
                 </div>
-                <input type="range" min="1" max="64" step="1" value="16" id="inp-ao-radius" class="slider-thumb">
+                <input type="range" min="0.1" max="1.0" step="0.01" value="0.25" id="inp-ao-radius" class="slider-thumb">
                 
                 <div class="flex justify-between mb-1 mt-2">
-                    <span class="text-xs text-gray-500">Min Threshold</span>
-                    <span id="val-ao-min" class="text-gray-500 font-mono text-xs">0.005</span>
+                    <span class="text-xs text-gray-500">Thickness</span>
+                    <span id="val-ao-min" class="text-gray-500 font-mono text-xs">0.100</span>
                 </div>
-                <input type="range" min="0.001" max="0.1" step="0.001" value="0.005" id="inp-ao-min" class="slider-thumb">
+                <input type="range" min="0.01" max="1.0" step="0.01" value="0.1" id="inp-ao-min" class="slider-thumb">
             </div>
             
             <div>
@@ -265,7 +265,7 @@
         import { RGBELoader } from 'three/addons/loaders/RGBELoader.js';
         import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
         import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
-        import { SSAOPass } from 'three/addons/postprocessing/SSAOPass.js';
+        import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
         import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
         // State
@@ -273,9 +273,9 @@
             exposure: 1.0,
             envIntensity: 1.0,
             aoEnabled: true,
-            aoMaxDist: 0.1,
-            aoMinDist: 0.005,
-            aoRadius: 16,
+            aoDistanceExponent: 1.0,
+            aoThickness: 0.1,
+            aoRadius: 0.25,
             bgBlur: 0.0,
             envRotation: 0,
             material: {
@@ -327,15 +327,15 @@
 
         const width = window.innerWidth;
         const height = window.innerHeight;
-        const ssaoPass = new SSAOPass(scene, camera, width, height);
+        const aoPass = new GTAOPass(scene, camera, width, height);
         
         // INITIAL VALUES - Critical for initial visual
-        ssaoPass.kernelRadius = state.aoRadius; 
-        ssaoPass.minDistance = state.aoMinDist;
-        ssaoPass.maxDistance = state.aoMaxDist; 
-        ssaoPass.output = SSAOPass.OUTPUT.Default;
+        aoPass.radius = state.aoRadius; 
+        aoPass.distanceExponent = state.aoDistanceExponent;
+        aoPass.thickness = state.aoThickness;
+        aoPass.output = GTAOPass.OUTPUT.Default;
         
-        composer.addPass(ssaoPass);
+        composer.addPass(aoPass);
 
         const outputPass = new OutputPass();
         composer.addPass(outputPass);
@@ -577,29 +577,32 @@
 
         document.getElementById('inp-ao-view').addEventListener('change', (e) => {
              if (e.target.checked) {
-                 ssaoPass.output = SSAOPass.OUTPUT.SSAO;
+                 aoPass.output = GTAOPass.OUTPUT.AO;
              } else {
-                 ssaoPass.output = SSAOPass.OUTPUT.Default;
+                 aoPass.output = GTAOPass.OUTPUT.Default;
              }
         });
 
-        // Formerly "Intensity", now mapped to MaxDistance which controls the "spread" and "fade"
-        // Lower Max Distance = Tighter shadows (sometimes darker in corners), Higher = spread out
+        // Formerly "Intensity", now mapped to distanceExponent which controls falloff
+        // Higher exponent = tighter, darker shadows; Lower = softer, spread out
         document.getElementById('inp-ao-intensity').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            ssaoPass.maxDistance = val;
+            state.aoDistanceExponent = val;
+            aoPass.distanceExponent = val;
             document.getElementById('val-ao-intensity').textContent = val.toFixed(2);
         });
 
         document.getElementById('inp-ao-radius').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            ssaoPass.kernelRadius = val;
+            state.aoRadius = val;
+            aoPass.radius = val;
             document.getElementById('val-ao-radius').textContent = val;
         });
 
         document.getElementById('inp-ao-min').addEventListener('input', (e) => {
             const val = parseFloat(e.target.value);
-            ssaoPass.minDistance = val;
+            state.aoThickness = val;
+            aoPass.thickness = val;
             document.getElementById('val-ao-min').textContent = val.toFixed(3);
         });
 
