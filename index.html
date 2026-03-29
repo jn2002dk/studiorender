@@ -425,7 +425,7 @@
         
         const rgbeLoader = new RGBELoader();
         // Using a studio HDRI from Poly Haven (public domain)
-        rgbeLoader.load('https://dl.polyhaven.org/file/ph-assets/HDRIs/hdr/1k/studio_small_09_1k.hdr', function (texture) {
+        rgbeLoader.load('studio_small_09_1k.hdr', function (texture) {
             texture.mapping = THREE.EquirectangularReflectionMapping;
             scene.environment = texture;
             scene.background = texture;
